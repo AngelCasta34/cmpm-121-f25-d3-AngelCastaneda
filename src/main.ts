@@ -25,11 +25,8 @@ const statusPanelDiv = document.createElement("div");
 statusPanelDiv.id = "statusPanel";
 document.body.append(statusPanelDiv);
 
-// Our classroom location
-const CLASSROOM_LATLNG = leaflet.latLng(
-  36.997936938057016,
-  -122.05703507501151,
-);
+// Our world anchor location (UCSC classroom for testing)
+const WORLD_ORIGIN = leaflet.latLng(36.997936938057016, -122.05703507501151);
 
 // Tunable gameplay parameters
 const GAMEPLAY_ZOOM_LEVEL = 19;
@@ -37,11 +34,11 @@ const TILE_DEGREES = 1e-4;
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
 const INTERACTION_RADIUS_METERS = 30;
-const WIN_VALUE = 16;
+const WIN_VALUE = 32;
 
 // Create the map (element with id "map" is defined in index.html)
 const map = leaflet.map(mapDiv, {
-  center: CLASSROOM_LATLNG,
+  center: WORLD_ORIGIN,
   zoom: GAMEPLAY_ZOOM_LEVEL,
   minZoom: GAMEPLAY_ZOOM_LEVEL,
   maxZoom: GAMEPLAY_ZOOM_LEVEL,
@@ -58,92 +55,142 @@ leaflet
   })
   .addTo(map);
 
+// Track player’s position in grid coordinates
+let playerI = 0;
+let playerJ = 0;
+
+// Convert grid coordinates to lat/lng
+function gridToLatLng(i: number, j: number): leaflet.LatLng {
+  return leaflet.latLng(
+    WORLD_ORIGIN.lat + i * TILE_DEGREES,
+    WORLD_ORIGIN.lng + j * TILE_DEGREES,
+  );
+}
+
 // Add a marker to represent the player
-const playerMarker = leaflet.marker(CLASSROOM_LATLNG);
+const playerMarker = leaflet.marker(WORLD_ORIGIN);
 playerMarker.bindTooltip("That's you!");
 playerMarker.addTo(map);
 
-// Display the player's held token or empty hand
+// Ensure map tiles render correctly after initial load
+setTimeout(() => map.invalidateSize(), 200);
+
+// Display the player's held token
 let heldToken: number | null = null;
 statusPanelDiv.innerHTML = "Empty hand.";
 
-// Track all cells by coordinates
-interface CellData {
-  i: number;
-  j: number;
-  value: number | null; // null means empty
-}
-const cells = new Map<string, CellData>();
+// Create movement controls
+const directions = ["North", "South", "East", "West"];
+directions.forEach((dir) => {
+  const btn = document.createElement("button");
+  btn.textContent = dir;
+  btn.addEventListener("click", () => movePlayer(dir));
+  controlPanelDiv.appendChild(btn);
+});
 
-// Add caches to the map by cell numbers
-function spawnCache(i: number, j: number) {
-  // Convert cell numbers into lat/lng bounds
-  const origin = CLASSROOM_LATLNG;
-  const bounds = leaflet.latLngBounds([
-    [origin.lat + i * TILE_DEGREES, origin.lng + j * TILE_DEGREES],
-    [origin.lat + (i + 1) * TILE_DEGREES, origin.lng + (j + 1) * TILE_DEGREES],
-  ]);
+// Move player one grid cell in the chosen direction
+function movePlayer(direction: string) {
+  if (direction === "North") playerI -= 1;
+  if (direction === "South") playerI += 1;
+  if (direction === "West") playerJ -= 1;
+  if (direction === "East") playerJ += 1;
 
-  // Initialize token data deterministically using luck()
-  const cellId = `${i},${j}`;
-  const hasToken = luck(cellId) < CACHE_SPAWN_PROBABILITY;
-  const tokenValue = hasToken ? 2 : null;
-  const data: CellData = { i, j, value: tokenValue };
-  cells.set(cellId, data);
+  const newLatLng = gridToLatLng(playerI, playerJ);
+  playerMarker.setLatLng(newLatLng);
+  map.panTo(newLatLng);
 
-  // Add a rectangle to the map to represent the cache
-  const rect = leaflet.rectangle(bounds, {
-    color: data.value ? "blue" : "gray",
-    weight: 1,
-  });
-  rect.addTo(map);
-
-  // Show token value directly on the map (tooltip)
-  rect.bindTooltip(() => data.value?.toString() ?? "empty");
-
-  // Handle interactions with the cache
-  rect.on("click", () => {
-    const cellCenter = bounds.getCenter();
-    const dist = CLASSROOM_LATLNG.distanceTo(cellCenter);
-
-    // Only allow interaction if within the defined radius
-    if (dist > INTERACTION_RADIUS_METERS) {
-      statusPanelDiv.innerHTML = "Too far away to interact.";
-      return;
-    }
-
-    // Picking up a token
-    if (heldToken === null && data.value !== null) {
-      heldToken = data.value;
-      data.value = null;
-      statusPanelDiv.innerHTML = `Picked up token: ${heldToken}`;
-    } // Dropping a token into an empty cell
-    else if (heldToken !== null && data.value === null) {
-      data.value = heldToken;
-      heldToken = null;
-      statusPanelDiv.innerHTML = `Placed token in cell (${i}, ${j}).`;
-    } // Combining tokens of equal value
-    else if (heldToken !== null && data.value === heldToken) {
-      data.value *= 2;
-      heldToken = null;
-      statusPanelDiv.innerHTML = `Combined tokens into ${data.value}!`;
-      if (data.value >= WIN_VALUE) {
-        alert("You win!");
-      }
-    } else {
-      statusPanelDiv.innerHTML = "No valid action available.";
-    }
-
-    // Update cell color and tooltip after interaction
-    rect.setStyle({ color: data.value ? "blue" : "gray" });
-    rect.bindTooltip(() => data.value?.toString() ?? "empty");
-  });
+  refreshVisibleCells();
 }
 
-// Look around the player's neighborhood for caches to spawn
-for (let i = -NEIGHBORHOOD_SIZE; i < NEIGHBORHOOD_SIZE; i++) {
-  for (let j = -NEIGHBORHOOD_SIZE; j < NEIGHBORHOOD_SIZE; j++) {
-    // If location i,j is lucky enough, spawn a cache!
-    spawnCache(i, j);
+// Keep track of visible rectangles
+const activeRects: leaflet.Rectangle[] = [];
+
+// Add caches to the map by cell numbers (spawn/despawn dynamically)
+function refreshVisibleCells() {
+  // Remove all old cells
+  activeRects.forEach((r) => map.removeLayer(r));
+  activeRects.length = 0;
+
+  // Spawn new visible cells centered on player
+  for (let di = -NEIGHBORHOOD_SIZE; di <= NEIGHBORHOOD_SIZE; di++) {
+    for (let dj = -NEIGHBORHOOD_SIZE; dj <= NEIGHBORHOOD_SIZE; dj++) {
+      const i = playerI + di;
+      const j = playerJ + dj;
+
+      // Convert cell numbers into lat/lng bounds
+      const origin = gridToLatLng(i, j);
+      const bounds = leaflet.latLngBounds([
+        [origin.lat, origin.lng],
+        [origin.lat + TILE_DEGREES, origin.lng + TILE_DEGREES],
+      ]);
+
+      // Deterministic token spawning using luck()
+      const cellId = `${i},${j}`;
+      const hasToken = luck(cellId) < CACHE_SPAWN_PROBABILITY;
+      const tokenValue = hasToken ? 2 : null;
+
+      // Add a rectangle to the map to represent the cache
+      const rect = leaflet.rectangle(bounds, {
+        color: tokenValue ? "blue" : "gray",
+        weight: 1,
+      });
+      rect.addTo(map);
+
+      // Show token value directly on the map
+      rect.bindTooltip(() => tokenValue?.toString() ?? "empty");
+
+      // Handle interactions with the cache
+      rect.on("click", () => {
+        handleCellClick(i, j, tokenValue, rect);
+      });
+
+      activeRects.push(rect);
+    }
   }
 }
+
+// Handle interactions with each cell
+function handleCellClick(
+  i: number,
+  j: number,
+  value: number | null,
+  rect: leaflet.Rectangle,
+) {
+  const playerPos = gridToLatLng(playerI, playerJ);
+  const cellCenter = rect.getBounds().getCenter();
+  const dist = playerPos.distanceTo(cellCenter);
+
+  // Only allow interaction if within the defined radius
+  if (dist > INTERACTION_RADIUS_METERS) {
+    statusPanelDiv.innerHTML = "Too far away to interact.";
+    return;
+  }
+
+  // Picking up a token
+  if (heldToken === null && value !== null) {
+    heldToken = value;
+    rect.setStyle({ color: "gray" });
+    statusPanelDiv.innerHTML = `Picked up token: ${heldToken}`;
+  } // Dropping a token into an empty cell
+  else if (heldToken !== null && value === null) {
+    value = heldToken;
+    heldToken = null;
+    rect.setStyle({ color: "blue" });
+    statusPanelDiv.innerHTML = `Placed token in cell (${i}, ${j}).`;
+  } // Combining tokens of equal value
+  else if (heldToken !== null && value === heldToken) {
+    const newValue = value * 2;
+    heldToken = null;
+    rect.setStyle({ color: "blue" });
+    rect.bindTooltip(() => newValue.toString());
+    statusPanelDiv.innerHTML = `Combined tokens into ${newValue}!`;
+    if (newValue >= WIN_VALUE) {
+      alert("You win!");
+    }
+  } else {
+    statusPanelDiv.innerHTML = "No valid action available.";
+  }
+}
+
+// Initialize map with visible cells
+refreshVisibleCells();
