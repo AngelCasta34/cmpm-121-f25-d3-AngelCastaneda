@@ -102,12 +102,21 @@ function movePlayer(direction: string) {
   refreshVisibleCells();
 }
 
-// Keep track of visible rectangles
+// Keep track of visible rectangles (Flyweight pattern)
 const activeRects: leaflet.Rectangle[] = [];
+
+// Store persistent modified cell states (Memento pattern)
+interface CellState {
+  i: number;
+  j: number;
+  value: number | null;
+}
+
+const modifiedCells = new Map<string, CellState>();
 
 // Add caches to the map by cell numbers (spawn/despawn dynamically)
 function refreshVisibleCells() {
-  // Remove all old cells
+  // Remove all old cells (Flyweight cleanup)
   activeRects.forEach((r) => map.removeLayer(r));
   activeRects.length = 0;
 
@@ -116,6 +125,14 @@ function refreshVisibleCells() {
     for (let dj = -NEIGHBORHOOD_SIZE; dj <= NEIGHBORHOOD_SIZE; dj++) {
       const i = playerI + di;
       const j = playerJ + dj;
+      const cellId = `${i},${j}`;
+
+      // Restore from memento if modified; otherwise use luck() seed
+      let cellState = modifiedCells.get(cellId);
+      if (!cellState) {
+        const hasToken = luck(cellId) < CACHE_SPAWN_PROBABILITY;
+        cellState = { i, j, value: hasToken ? 2 : null };
+      }
 
       // Convert cell numbers into lat/lng bounds
       const origin = gridToLatLng(i, j);
@@ -124,24 +141,19 @@ function refreshVisibleCells() {
         [origin.lat + TILE_DEGREES, origin.lng + TILE_DEGREES],
       ]);
 
-      // Deterministic token spawning using luck()
-      const cellId = `${i},${j}`;
-      const hasToken = luck(cellId) < CACHE_SPAWN_PROBABILITY;
-      const tokenValue = hasToken ? 2 : null;
-
-      // Add a rectangle to the map to represent the cache
+      // Add a rectangle to represent the cell
       const rect = leaflet.rectangle(bounds, {
-        color: tokenValue ? "blue" : "gray",
+        color: cellState.value ? "blue" : "gray",
         weight: 1,
       });
       rect.addTo(map);
 
       // Show token value directly on the map
-      rect.bindTooltip(() => tokenValue?.toString() ?? "empty");
+      rect.bindTooltip(() => cellState.value?.toString() ?? "empty");
 
       // Handle interactions with the cache
       rect.on("click", () => {
-        handleCellClick(i, j, tokenValue, rect);
+        handleCellClick(i, j, cellState!, rect);
       });
 
       activeRects.push(rect);
@@ -153,12 +165,13 @@ function refreshVisibleCells() {
 function handleCellClick(
   i: number,
   j: number,
-  value: number | null,
+  cellState: CellState,
   rect: leaflet.Rectangle,
 ) {
   const playerPos = gridToLatLng(playerI, playerJ);
   const cellCenter = rect.getBounds().getCenter();
   const dist = playerPos.distanceTo(cellCenter);
+  const cellId = `${i},${j}`;
 
   // Only allow interaction if within the defined radius
   if (dist > INTERACTION_RADIUS_METERS) {
@@ -167,28 +180,38 @@ function handleCellClick(
   }
 
   // Picking up a token
-  if (heldToken === null && value !== null) {
-    heldToken = value;
+  if (heldToken === null && cellState.value !== null) {
+    heldToken = cellState.value;
+    cellState.value = null;
     rect.setStyle({ color: "gray" });
+    modifiedCells.set(cellId, { ...cellState });
     statusPanelDiv.innerHTML = `Picked up token: ${heldToken}`;
   } // Dropping a token into an empty cell
-  else if (heldToken !== null && value === null) {
-    value = heldToken;
+  else if (heldToken !== null && cellState.value === null) {
+    cellState.value = heldToken;
     heldToken = null;
     rect.setStyle({ color: "blue" });
+    modifiedCells.set(cellId, { ...cellState });
     statusPanelDiv.innerHTML = `Placed token in cell (${i}, ${j}).`;
   } // Combining tokens of equal value
-  else if (heldToken !== null && value === heldToken) {
-    const newValue = value * 2;
+  else if (heldToken !== null && cellState.value === heldToken) {
+    cellState.value *= 2;
     heldToken = null;
     rect.setStyle({ color: "blue" });
-    rect.bindTooltip(() => newValue.toString());
-    statusPanelDiv.innerHTML = `Combined tokens into ${newValue}!`;
-    if (newValue >= WIN_VALUE) {
+    rect.bindTooltip(() => cellState.value?.toString() ?? "empty");
+    modifiedCells.set(cellId, { ...cellState });
+    statusPanelDiv.innerHTML = `Combined tokens into ${cellState.value}!`;
+    if (cellState.value >= WIN_VALUE) {
       alert("You win!");
     }
   } else {
     statusPanelDiv.innerHTML = "No valid action available.";
+  }
+
+  // Clean up modified cell memory if returned to seed state
+  const baseValue = luck(cellId) < CACHE_SPAWN_PROBABILITY ? 2 : null;
+  if (cellState.value === baseValue) {
+    modifiedCells.delete(cellId);
   }
 }
 
