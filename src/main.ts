@@ -198,11 +198,11 @@ class GeoMovementController implements MovementController {
         refreshVisibleCells();
         saveGameState();
 
-        statusPanelDiv.innerHTML = `GPS active | ${lat.toFixed(4)}, ${
-          lng.toFixed(
+        statusPanelDiv.innerHTML = `GPS active | ${
+          lat.toFixed(
             4,
           )
-        }`;
+        }, ${lng.toFixed(4)}`;
       },
       (err) => {
         statusPanelDiv.innerHTML = `Geolocation error: ${err.message}`;
@@ -233,16 +233,18 @@ function activateMovement(mode: string) {
 }
 
 switchMovementBtn.addEventListener("click", () => {
-  const current = new URLSearchParams(window.location.search).get("movement");
+  const current = new URLSearchParams(globalThis.location.search).get(
+    "movement",
+  );
   const newMode = current === "geo" ? "buttons" : "geo";
 
-  const params = new URLSearchParams(window.location.search);
+  const params = new URLSearchParams(globalThis.location.search);
   params.set("movement", newMode);
-  window.location.search = params.toString();
+  globalThis.location.search = params.toString();
 });
 
 // Determine initial mode from query string
-const params = new URLSearchParams(window.location.search);
+const params = new URLSearchParams(globalThis.location.search);
 activateMovement(params.get("movement") ?? "buttons");
 
 // Keep track of visible rectangles (Flyweight pattern)
