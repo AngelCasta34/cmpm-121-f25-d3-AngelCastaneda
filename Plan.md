@@ -149,32 +149,66 @@ Tested persistence by picking up, dropping, and combining tokens, then returning
 Prepared final deployment of D3.c to GitHub Pages.
 Final milestone commit message: “D3.c complete.”
 
-## Notes and Next Actions
+## Notes and Next Actions (Before D3.d)
 
-Plan for D3.d to introduce cross-session persistence using local or indexed storage.
-Profile and optimize performance for large modified cell counts.
-Consider a debug overlay showing how many cells are active versus stored.
-Verify memory stability when moving continuously in one direction for extended periods.
+Plan for D3.d to introduce cross-session persistence using browser storage.
+Plan geolocation testing on mobile devices.
+Prepare an interface abstraction for movement input.
+Ensure memory stability across extended real-world movement.
 
-## Next Commit Plan
+## D3.d: Gameplay Across Real-world Space and Time
 
-1. **feat: implement Flyweight and Memento patterns for D3.c**
+**Key Technical Challenge:**
+Use the browser Geolocation API and localStorage to allow real-world movement and cross-session persistence.
+Hide movement logic behind a Facade interface so that the rest of the game's code does not depend on whether movement is button-based or geolocation-based.
 
-   - Add `modifiedCells` map to serialize and restore changed cell states.
-   - Ensure memory-efficient rendering by removing off-screen cells.
-   - Confirm that cell states persist across movement and return.
+**Key Gameplay Challenge:**
+Allow players to physically move to control the game and resume gameplay seamlessly after closing the page.
 
-2. **refactor: clean and optimize refresh logic**
+### Steps
 
-   - Separate rendering from persistence code.
-   - Remove temporary logs and redundant checks.
+#### Facade Movement System
 
-3. **test: verify persistence and cleanup behavior**
+Created a unified `MovementController` interface to decouple game logic from movement method.
+Implemented two movement classes:
 
-   - Move between areas to confirm modified cells restore correctly.
-   - Check that unmodified cells regenerate deterministically.
+- `ButtonMovementController` for desktop testing
+- `GeoMovementController` for real-world GPS movement
+  The game now interacts only with the interface, not the specific controller.
 
-4. **docs: update PLAN.md and finalize D3.c milestone**
+#### Geolocation Integration
 
-   - Record progress and confirm GitHub Pages deployment.
-   - Mark completion with commit message “D3.c complete.”
+Integrated the browser Geolocation API using `navigator.geolocation.watchPosition`.
+Converted real-world latitude and longitude into grid coordinates.
+Automatically updated the player's marker and map position as the device moved.
+Displayed live GPS status and coordinate accuracy updates.
+
+#### Runtime Movement Switching
+
+Added a “Switch Movement Mode” button to toggle between button-based and geolocation-based movement.
+Added query-string movement selection:
+
+- `index.html?movement=geo`
+- `index.html?movement=buttons`
+  Ensured both runtime and URL-based selection work cleanly.
+
+#### Persistent Game State
+
+Used `localStorage` to save player location, held token, and all modified cell states.
+Automatically restored this data on page load.
+Ensured persistence after closing the browser tab or refreshing the page.
+Added a “New Game” control that clears localStorage and resets the game.
+
+#### Gameplay Experience
+
+The player now moves by walking around in the real world.
+Button mode is still available for desktop testing.
+All crafting progress, modified cells, and inventory persist across sessions.
+Players can switch modes without losing progress.
+
+#### Cleanup and Deployment
+
+Cleaned up code and verified Facade boundaries.
+Tested both movement modes on mobile and desktop.
+Deployed the D3.d version to GitHub Pages.
+Marked milestone completion with “D3.d complete.”
